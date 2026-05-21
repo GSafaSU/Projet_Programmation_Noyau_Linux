@@ -227,11 +227,78 @@ static int ouichefs_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
+static ssize_t ouichefs_read(struct file *file, char __user *buf,
+                              size_t count, loff_t *pos)
+{
+    /* 1. Récupérer inode, sb, ci */
+    struct inode *inode = file->f_inode;
+    struct super_block *sb = inode->i_sb;
+    struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
+
+    /* 2. EOF check : rien à lire si on est déjà à la fin */
+    if (*pos >= inode->i_size)
+        return 0;
+
+    /* 3. Ajuster count pour ne pas lire au-delà de i_size */
+    if (*pos + count > inode->i_size)
+        count = inode->i_size - *pos;
+        /* sans ça on lirait des octets hors fichier (garbage) */
+
+    /* 4. Lire le bloc index */
+    struct buffer_head *bh_index = sb_bread(sb, ci->index_block);
+    if (!bh_index)
+        return -EIO;
+    struct ouichefs_file_index_block *index =
+        (struct ouichefs_file_index_block *)bh_index->b_data;
+
+    /* 5. Calculer le bloc logique et l'offset dans ce bloc */
+    uint32_t logical_block = *pos / OUICHEFS_BLOCK_SIZE;
+    uint32_t offset_in_block = *pos % OUICHEFS_BLOCK_SIZE;
+    /* offset_in_block : où dans le bloc on commence à lire */
+
+    /* 6. Récupérer le numéro de bloc physique */
+    uint32_t phys_block = le32_to_cpu(index->blocks[logical_block]);
+    if (!phys_block) {
+        /* bloc non alloué = trou dans le fichier */
+        brelse(bh_index);
+        return -EIO;
+    }
+
+    /* 7. Lire le bloc de données */
+    struct buffer_head *bh_data = sb_bread(sb, phys_block);
+    if (!bh_data) {
+        brelse(bh_index);
+        return -EIO;
+    }
+
+    /* 8. Limiter count à ce qui reste dans ce bloc */
+    uint32_t available_in_block = OUICHEFS_BLOCK_SIZE - offset_in_block;
+    if (count > available_in_block)
+        count = available_in_block;
+        /* on ne lit qu'un seul bloc à la fois */
+
+    /* 9. Copier vers userspace depuis b_data + offset */
+    unsigned long not_copied = copy_to_user(buf,
+                                            bh_data->b_data + offset_in_block,
+                                            count);
+    ssize_t total_read = count - not_copied;
+    /* total_read = ce qui a été réellement copié */
+
+    /* 10. Avancer le curseur */
+    *pos += total_read;
+
+    /* 11. Libérer les buffer_heads */
+    brelse(bh_data);
+    brelse(bh_index);
+
+    return total_read;
+}
+
 const struct file_operations ouichefs_file_ops = {
 	.owner = THIS_MODULE,
 	.open = ouichefs_open,
 	.llseek = generic_file_llseek,
-	.read_iter = generic_file_read_iter,
+	.read_iter = ouichefs_read,
 	.write_iter = generic_file_write_iter,
 	.fsync = generic_file_fsync,
 };
