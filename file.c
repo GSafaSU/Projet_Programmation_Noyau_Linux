@@ -294,6 +294,130 @@ static ssize_t ouichefs_read(struct file *file, char __user *buf,
     return total_read;
 }
 
+static ssize_t ouichefs_write(struct file *file, char __user *buf,
+                              size_t count, loff_t *pos)
+{
+    struct inode *inode = file->f_inode;
+    struct super_block *sb = inode->i_sb;
+    struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+    struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
+    
+    struct buffer_head *bh_index = NULL;
+    struct buffer_head *bh_data = NULL;
+    struct ouichefs_file_index_block *index;
+
+    size_t len = count;
+    int ret = 0;
+    loff_t new_pos = *pos;
+    uint32_t nr_allocs = 0;
+    int total_written = 0;
+
+    inode_lock(inode);
+
+    if(file->f_flags & O_APPEND)
+        new_pos = file->f_inode->i_size; /* Remis comme avant */
+    
+    /* Check if the write can be completed (enough space?) */
+    if (new_pos + len > OUICHEFS_MAX_FILESIZE) {
+        ret = -ENOSPC;
+        goto out_unlock;
+    }
+
+    nr_allocs = max(new_pos + len, file->f_inode->i_size) / OUICHEFS_BLOCK_SIZE; /* Remis comme avant */
+
+    if (nr_allocs > inode->i_blocks - 1)
+        nr_allocs -= inode->i_blocks - 1;
+    else
+        nr_allocs = 0;
+
+    if (nr_allocs > sbi->nr_free_blocks) {
+        ret = -ENOSPC;
+        goto out_unlock;
+    }
+
+    bh_index = sb_bread(sb, ci->index_block);
+    if (!bh_index) {
+        ret = -EIO;
+        goto out_unlock;
+    }
+    
+    index = (struct ouichefs_file_index_block *)bh_index->b_data;
+    
+    while (len > 0) {
+        int new_block = 0; 
+
+        uint32_t logical_block = new_pos / OUICHEFS_BLOCK_SIZE;
+        uint32_t offset_in_block = new_pos % OUICHEFS_BLOCK_SIZE;
+
+        uint32_t available_in_block = OUICHEFS_BLOCK_SIZE - offset_in_block;
+        if (available_in_block > len)
+            available_in_block = len;
+
+        uint32_t phys_block = le32_to_cpu(index->blocks[logical_block]);
+
+        if (!phys_block) {
+            /* bloc non alloué = trou dans le fichier */
+            new_block = 1;
+            phys_block = get_free_block(sbi);
+            if (!phys_block) {
+                ret = -ENOSPC;
+                goto brelse_index;
+            }
+            index->blocks[logical_block] = cpu_to_le32(phys_block);
+            mark_buffer_dirty(bh_index);
+        }
+
+        bh_data = sb_bread(sb, phys_block);
+        if (!bh_data) {
+            ret = -EIO;
+            goto brelse_index;
+        }
+
+        if (new_block) {
+            memset(bh_data->b_data, 0, OUICHEFS_BLOCK_SIZE);
+        }
+
+        if (copy_from_user(bh_data->b_data + offset_in_block, buf + total_written, available_in_block)) {
+            brelse(bh_data);
+            ret = -EFAULT;
+            goto brelse_index;
+        }
+
+        mark_buffer_dirty(bh_data);
+        sync_dirty_buffer(bh_data);
+        brelse(bh_data);
+
+        new_pos += available_in_block;
+        total_written += available_in_block;
+        len -= available_in_block;
+
+        if (new_pos > inode->i_size) /* Remis comme avant */
+            inode->i_size = new_pos; /* Remis comme avant */
+    }
+
+    if (total_written > 0) {
+        /* Ici on garde i_size_read juste pour le roundup, c'est plus sûr pour le calcul de blocs */
+        inode->i_blocks = (roundup(inode->i_size, OUICHEFS_BLOCK_SIZE) / 
+                           OUICHEFS_BLOCK_SIZE) + 1;
+        inode->i_mtime = inode->i_ctime = current_time(inode);
+        mark_inode_dirty(inode);
+    }
+
+    *pos = new_pos;
+    ret = total_written;
+
+brelse_index:
+    if (bh_index) {
+        sync_dirty_buffer(bh_index);
+        brelse(bh_index);
+    }
+
+out_unlock:
+    inode_unlock(inode);
+    
+    return ret;
+}
+
 const struct file_operations ouichefs_file_ops = {
 	.owner = THIS_MODULE,
 	.open = ouichefs_open,
