@@ -294,7 +294,7 @@ static ssize_t ouichefs_read(struct file *file, char __user *buf,
     return total_read;
 }
 
-static ssize_t ouichefs_write(struct file *file, char __user *buf,
+static ssize_t ouichefs_write(struct file *file, const char __user *buf,
                               size_t count, loff_t *pos)
 {
     struct inode *inode = file->f_inode;
@@ -315,7 +315,7 @@ static ssize_t ouichefs_write(struct file *file, char __user *buf,
     inode_lock(inode);
 
     if(file->f_flags & O_APPEND)
-        new_pos = file->f_inode->i_size; /* Remis comme avant */
+        new_pos = file->f_inode->i_size; 
     
     /* Check if the write can be completed (enough space?) */
     if (new_pos + len > OUICHEFS_MAX_FILESIZE) {
@@ -323,7 +323,7 @@ static ssize_t ouichefs_write(struct file *file, char __user *buf,
         goto out_unlock;
     }
 
-    nr_allocs = max(new_pos + len, file->f_inode->i_size) / OUICHEFS_BLOCK_SIZE; /* Remis comme avant */
+    nr_allocs = max((loff_t)(new_pos + len), inode->i_size) / OUICHEFS_BLOCK_SIZE;
 
     if (nr_allocs > inode->i_blocks - 1)
         nr_allocs -= inode->i_blocks - 1;
@@ -391,8 +391,8 @@ static ssize_t ouichefs_write(struct file *file, char __user *buf,
         total_written += available_in_block;
         len -= available_in_block;
 
-        if (new_pos > inode->i_size) /* Remis comme avant */
-            inode->i_size = new_pos; /* Remis comme avant */
+        if (new_pos > inode->i_size) 
+            inode->i_size = new_pos; 
     }
 
     if (total_written > 0) {
@@ -422,7 +422,7 @@ const struct file_operations ouichefs_file_ops = {
 	.owner = THIS_MODULE,
 	.open = ouichefs_open,
 	.llseek = generic_file_llseek,
-	.read_iter = ouichefs_read,
-	.write_iter = generic_file_write_iter,
+	.read = ouichefs_read,
+	.write = ouichefs_write,
 	.fsync = generic_file_fsync,
 };
