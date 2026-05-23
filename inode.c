@@ -358,10 +358,10 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 	for (i = 0; i < inode->i_blocks - 1; i++) {
 		char *block;
 
-		if (!file_block->blocks[i])
+		if (!file_block->blocks[i].start)
 			continue;
 
-    bh2 = sb_bread(sb, le32_to_cpu(file_block->blocks[i]));
+    bh2 = sb_bread(sb, le32_to_cpu(file_block->blocks[i].start));
 		if (!bh2)
 			goto put_block;
 		block = (char *)bh2->b_data;
@@ -369,7 +369,7 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 		mark_buffer_dirty(bh2);
 		brelse(bh2);
 put_block:
-		put_block(sbi, le32_to_cpu(file_block->blocks[i]));
+		put_block(sbi, le32_to_cpu(file_block->blocks[i].start));
 	}
 
 scrub:

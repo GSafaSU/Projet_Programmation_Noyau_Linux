@@ -45,7 +45,7 @@ static int ouichefs_file_get_block(struct inode *inode, sector_t iblock,
 	 * Check if iblock is already allocated. If not and create is true,
 	 * allocate it. Else, get the physical block number.
 	 */
-	if (index->blocks[iblock] == 0) {
+	if (index->blocks[iblock].count == 0) {//en rapport avec ce que nous dit le sujet là
 		if (!create) {
 			ret = 0;
 			goto brelse_index;
@@ -55,10 +55,10 @@ static int ouichefs_file_get_block(struct inode *inode, sector_t iblock,
 			ret = -ENOSPC;
 			goto brelse_index;
 		}
-		index->blocks[iblock] = cpu_to_le32(bno);
+		index->blocks[iblock].start = cpu_to_le32(bno);
 		mark_buffer_dirty(bh_index);
 	} else {
-		bno = le32_to_cpu(index->blocks[iblock]);
+		bno = le32_to_cpu(index->blocks[iblock].start);
 	}
 
 	/* Map the physical block to the given buffer_head */
@@ -175,8 +175,9 @@ static int ouichefs_write_end(struct file *file, struct address_space *mapping,
 
 			for (i = inode->i_blocks - 1; i < nr_blocks_old - 1;
 			     i++) {
-				put_block(OUICHEFS_SB(sb), le32_to_cpu(index->blocks[i]));
-				index->blocks[i] = 0;
+				put_block(OUICHEFS_SB(sb), le32_to_cpu(index->blocks[i].start));
+				index->blocks[i].start = 0;//ici on gere le cas ou le fichier rétrecit
+				index->blocks[i].count = 0;
 			}
 			mark_buffer_dirty(bh_index);
 			brelse(bh_index);
@@ -213,9 +214,10 @@ static int ouichefs_open(struct inode *inode, struct file *file)
 			return -EIO;
 		index = (struct ouichefs_file_index_block *)bh_index->b_data;
 
-		for (iblock = 0; index->blocks[iblock] != 0; iblock++) {
-			put_block(sbi, le32_to_cpu(index->blocks[iblock]));
-			index->blocks[iblock] = 0;
+		for (iblock = 0; index->blocks[iblock].count != 0; iblock++) {
+			put_block(sbi, le32_to_cpu(index->blocks[iblock].start));
+			index->blocks[iblock].start = 0;
+			index->blocks[iblock].count = 0;
 		}
 		inode->i_size = 0;
 		inode->i_blocks = 1;
@@ -257,7 +259,7 @@ static ssize_t ouichefs_read(struct file *file, char __user *buf,
     /* offset_in_block : où dans le bloc on commence à lire */
 
     /* 6. Récupérer le numéro de bloc physique */
-    uint32_t phys_block = le32_to_cpu(index->blocks[logical_block]);
+    uint32_t phys_block = le32_to_cpu(index->blocks[logical_block].start);
     if (!phys_block) {
         /* bloc non alloué = trou dans le fichier */
         brelse(bh_index);
@@ -353,7 +355,7 @@ static ssize_t ouichefs_write(struct file *file, const char __user *buf,
         if (available_in_block > len)
             available_in_block = len;
 
-        uint32_t phys_block = le32_to_cpu(index->blocks[logical_block]);
+        uint32_t phys_block = le32_to_cpu(index->blocks[logical_block].start);
 
         if (!phys_block) {
             /* bloc non alloué = trou dans le fichier */
@@ -363,7 +365,8 @@ static ssize_t ouichefs_write(struct file *file, const char __user *buf,
                 ret = -ENOSPC;
                 goto brelse_index;
             }
-            index->blocks[logical_block] = cpu_to_le32(phys_block);
+            index->blocks[logical_block].start = cpu_to_le32(phys_block);
+			index->blocks[logical_block].count = cpu_to_le32(1);//la on ecrit toujours qu'un block
             mark_buffer_dirty(bh_index);
         }
 
@@ -392,7 +395,7 @@ static ssize_t ouichefs_write(struct file *file, const char __user *buf,
         len -= available_in_block;
 
         if (new_pos > inode->i_size) 
-            inode->i_size = new_pos; 
+            inode->i_size = new_pos;
     }
 
     if (total_written > 0) {
@@ -426,3 +429,4 @@ const struct file_operations ouichefs_file_ops = {
 	.write = ouichefs_write,
 	.fsync = generic_file_fsync,
 };
+

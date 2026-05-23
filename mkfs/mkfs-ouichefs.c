@@ -16,9 +16,17 @@
 #define OUICHEFS_SB_BLOCK_NR 0
 
 #define OUICHEFS_BLOCK_SIZE (1 << 12) /* 4 KiB */
-#define OUICHEFS_MAX_FILESIZE (1 << 22) /* 4 MiB */
+#define OUICHEFS_MAX_FILESIZE (1 << 21) /* 2 MiB */
 #define OUICHEFS_FILENAME_LEN 28
 #define OUICHEFS_MAX_SUBFILES 128
+
+
+struct ouichefs_extent {
+	uint32_t start; /* first physical block number of the run */
+	uint32_t count; /* number of consecutive blocks in the run */
+};
+#define OUICHEFS_MAX_EXTENTS OUICHEFS_BLOCK_SIZE / sizeof(struct ouichefs_extent)
+
 
 struct ouichefs_inode {
 	mode_t i_mode; /* File mode */
@@ -56,7 +64,7 @@ struct ouichefs_superblock {
 };
 
 struct ouichefs_file_index_block {
-	uint32_t blocks[OUICHEFS_BLOCK_SIZE >> 2];
+	uint32_t blocks[OUICHEFS_BLOCK_SIZE];
 };
 
 struct ouichefs_dir_block {
