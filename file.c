@@ -365,32 +365,37 @@ static ssize_t ouichefs_write(struct file *file, const char __user *buf,
 			
             new_block = 1;
             phys_block = get_free_block(sbi);
-			int i=0;
-			while(index->blocks[i].count != 0 && i<OUICHEFS_MAX_EXTENTS){
-				i++;
-			}
-			//recuperation du dernière extends
-			if(i==0){
-
-			}
-			ouichefs_extent *last_extents = &index->blocks[i-1];
-			if((last_extents.start + last_extents.count)== phys_block){
-				last_extents.count++;
-			}else{
-				uint32_t new_ext_index = i;
-				if(new_ext_index > OUICHEFS_MAX_EXTENTS){
-					return -ENOSPC;
-				}
-				index->blocks[new_ext_index].start= cpu_to_le32(phys_block);
-				index->blocks[new_ext_index].count= cpu_to_le32(1);
-				
-			}
-
-
-            if (!phys_block) {
+			 if (!phys_block) {
                 ret = -ENOSPC;
                 goto brelse_index;
             }
+			int i=0;
+			//recuperation du dernière extends
+			while(index->blocks[i].count != 0 && i<OUICHEFS_MAX_EXTENTS){
+				i++;
+			}
+			
+			if(i>0){
+				struct ouichefs_extent *last = &index->blocks[i-1];
+				uint32_t start = le32_to_cpu(last->start);
+        		uint32_t cnt   = le32_to_cpu(last->count);
+				if((start +cnt)== phys_block){//contigue etendre le derniere extent
+					last->count=cpu_to_le32(cnt + 1);
+				}else{//non contigue -> new extent
+					uint32_t new_ext_index = i;
+					if(new_ext_index >= OUICHEFS_MAX_EXTENTS){
+						ret= -ENOSPC;
+						goto brelse_index;
+					}
+					index->blocks[new_ext_index].start= cpu_to_le32(phys_block);
+					index->blocks[new_ext_index].count= cpu_to_le32(1);
+					
+				}
+			}else{//cas ou c'est le 1er extent du fichier
+				index->blocks[0].start= cpu_to_le32(phys_block);
+				index->blocks[0].count= cpu_to_le32(1);
+					
+			}
 			mark_buffer_dirty(bh_index);
         }
 
