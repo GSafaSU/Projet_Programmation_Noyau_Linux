@@ -231,73 +231,80 @@ static int ouichefs_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
+
 static ssize_t ouichefs_read(struct file *file, char __user *buf,
                               size_t count, loff_t *pos)
 {
-    /* 1. Récupérer inode, sb, ci */
     struct inode *inode = file->f_inode;
     struct super_block *sb = inode->i_sb;
     struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
+    struct buffer_head *bh_index = NULL;
+    struct buffer_head *bh_data = NULL;
+    struct ouichefs_file_index_block *index;
+    size_t len = count;
+    int ret = 0;
+    loff_t new_pos = *pos;
+    int total_read = 0;
 
-    /* 2. EOF check : rien à lire si on est déjà à la fin */
-    if (*pos >= inode->i_size)
-        return 0;
+    inode_lock(inode);
 
-    /* 3. Ajuster count pour ne pas lire au-delà de i_size */
-    if (*pos + count > inode->i_size)
-        count = inode->i_size - *pos;
-        /* sans ça on lirait des octets hors fichier (garbage) */
-
-    /* 4. Lire le bloc index */
-    struct buffer_head *bh_index = sb_bread(sb, ci->index_block);
-    if (!bh_index)
-        return -EIO;
-    struct ouichefs_file_index_block *index =
-        (struct ouichefs_file_index_block *)bh_index->b_data;
-
-    /* 5. Calculer le bloc logique et l'offset dans ce bloc */
-    uint32_t logical_block = *pos / OUICHEFS_BLOCK_SIZE;
-    uint32_t offset_in_block = *pos % OUICHEFS_BLOCK_SIZE;
-    /* offset_in_block : où dans le bloc on commence à lire */
-
-    /* 6. Récupérer le numéro de bloc physique */
-    uint32_t phys_block = le32_to_cpu(index->blocks[logical_block].start);
-    if (!phys_block) {
-        /* bloc non alloué = trou dans le fichier */
-        brelse(bh_index);
-        return -EIO;
+    /* EOF check */
+    if (new_pos >= inode->i_size) {
+        ret = 0;
+        goto out_unlock;
     }
 
-    /* 7. Lire le bloc de données */
-    struct buffer_head *bh_data = sb_bread(sb, phys_block);
-    if (!bh_data) {
-        brelse(bh_index);
-        return -EIO;
+    /* Ajuster len pour ne pas lire au-delà de i_size */
+    if (new_pos + len > inode->i_size)
+        len = inode->i_size - new_pos;
+
+    /* Lire le bloc index */
+    bh_index = sb_bread(sb, ci->index_block);
+    if (!bh_index) {
+        ret = -EIO;
+        goto out_unlock;
+    }
+    index = (struct ouichefs_file_index_block *)bh_index->b_data;
+
+    while (len > 0) {
+        uint32_t logical_block    = new_pos / OUICHEFS_BLOCK_SIZE;
+        uint32_t offset_in_block  = new_pos % OUICHEFS_BLOCK_SIZE;
+        uint32_t available_in_block = OUICHEFS_BLOCK_SIZE - offset_in_block;
+        if (available_in_block > len)
+            available_in_block = len;
+
+        /* Traduction logique → physique via le helper 1.4.1 */
+        uint32_t phys_block = ouichefs_extent_get_block(index->blocks, logical_block);
+        if (!phys_block)
+            break;  /* bloc logique au-delà de la fin de la liste d'extents */
+
+        bh_data = sb_bread(sb, phys_block);
+        if (!bh_data) {
+            ret = -EIO;
+            goto brelse_index;
+        }
+
+        unsigned long not_copied = copy_to_user(buf + total_read,
+                                                bh_data->b_data + offset_in_block,
+                                                available_in_block);
+        brelse(bh_data);
+
+        size_t copied = available_in_block - not_copied;
+        total_read += copied;
+        new_pos    += copied;
+        len        -= copied;
     }
 
-    /* 8. Limiter count à ce qui reste dans ce bloc */
-    uint32_t available_in_block = OUICHEFS_BLOCK_SIZE - offset_in_block;
-    if (count > available_in_block)
-        count = available_in_block;
-        /* on ne lit qu'un seul bloc à la fois */
+    *pos = new_pos;
+    ret = total_read;
 
-    /* 9. Copier vers userspace depuis b_data + offset */
-    size_t to_copy = min(count, (size_t)(OUICHEFS_BLOCK_SIZE - offset_in_block)); //Pour ne pas lire au delà de la fin de ce bloc actuel
-
-	unsigned long not_copied = copy_to_user(buf,bh_data->b_data + offset_in_block, to_copy);
-	ssize_t total_read = to_copy - not_copied;
-    /* total_read = ce qui a été réellement copié */
-
-    /* 10. Avancer le curseur */
-    *pos += total_read;
-
-    /* 11. Libérer les buffer_heads */
-    brelse(bh_data);
+brelse_index:
     brelse(bh_index);
 
-    return total_read;
+out_unlock:
+    inode_unlock(inode);
+    return ret;
 }
-
 
 static ssize_t ouichefs_write(struct file *file, const char __user *buf,
                               size_t count, loff_t *pos)
