@@ -424,6 +424,25 @@ out_unlock:
     return ret;
 }
 
+static uint32_t ouichefs_extent_get_block(struct ouichefs_extent *extents, uint32_t logical_block){
+	
+	uint32_t i=0;
+	int ret=0;
+	while(extents[i].count != 0 && i<OUICHEFS_MAX_EXTENTS){
+		uint32_t start = le32_to_cpu(extents[i].start);
+		uint32_t count = le32_to_cpu(extents[i].count);
+		if(logical_block >= count) {
+			logical_block -= count;
+			i++;
+		}
+		else{
+			ret = start + logical_block;
+			break;
+		}
+	}
+	return ret;
+}
+
 
 static long ouichefs_ioctl(struct file *file, unsigned int cmd, unsigned long arg){
 	struct inode *inode = file->f_inode;
