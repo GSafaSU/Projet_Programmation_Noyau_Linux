@@ -21,6 +21,8 @@
  * represented by inode. If the requested block is not allocated and create is
  * true, allocate a new block on disk and map it.
  */
+
+
 static int ouichefs_file_get_block(struct inode *inode, sector_t iblock,
 				   struct buffer_head *bh_result, int create)
 {
@@ -419,6 +421,27 @@ out_unlock:
     inode_unlock(inode);
     
     return ret;
+}
+
+
+static uint32_t ouichefs_extent_get_block(
+		struct ouichefs_extent *extents, uint32_t logical_block){
+	
+	uint32_t i=0;
+	int ret=0;
+	while(extents[i].count != 0 && i<OUICHEFS_MAX_EXTENTS){
+		uint32_t start = le32_to_cpu(extents[i].start);
+		uint32_t count = le32_to_cpu(extents[i].count);
+		if(logical_block >= count) {
+			logical_block -= count;
+			i++;
+		}
+		else{
+			ret = start + logical_block;
+			break;
+		}
+	}
+	return ret;
 }
 
 const struct file_operations ouichefs_file_ops = {
