@@ -358,19 +358,40 @@ static ssize_t ouichefs_write(struct file *file, const char __user *buf,
         if (available_in_block > len)
             available_in_block = len;
 
-        uint32_t phys_block = le32_to_cpu(index->blocks[logical_block].start);
+        uint32_t phys_block = ouichefs_extent_get_block(index->blocks,logical_block);
 
         if (!phys_block) {
             /* bloc non alloué = trou dans le fichier */
+			
             new_block = 1;
             phys_block = get_free_block(sbi);
+			int i=0;
+			while(index->blocks[i].count != 0 && i<OUICHEFS_MAX_EXTENTS){
+				i++;
+			}
+			//recuperation du dernière extends
+			if(i==0){
+
+			}
+			ouichefs_extent *last_extents = &index->blocks[i-1];
+			if((last_extents.start + last_extents.count)== phys_block){
+				last_extents.count++;
+			}else{
+				uint32_t new_ext_index = i;
+				if(new_ext_index > OUICHEFS_MAX_EXTENTS){
+					return -ENOSPC;
+				}
+				index->blocks[new_ext_index].start= cpu_to_le32(phys_block);
+				index->blocks[new_ext_index].count= cpu_to_le32(1);
+				
+			}
+
+
             if (!phys_block) {
                 ret = -ENOSPC;
                 goto brelse_index;
             }
-            index->blocks[logical_block].start = cpu_to_le32(phys_block);
-			index->blocks[logical_block].count = cpu_to_le32(1);//la on ecrit toujours qu'un block
-            mark_buffer_dirty(bh_index);
+			mark_buffer_dirty(bh_index);
         }
 
         bh_data = sb_bread(sb, phys_block);
@@ -424,6 +445,7 @@ out_unlock:
     return ret;
 }
 
+
 static uint32_t ouichefs_extent_get_block(struct ouichefs_extent *extents, uint32_t logical_block){
 	
 	uint32_t i=0;
@@ -442,7 +464,6 @@ static uint32_t ouichefs_extent_get_block(struct ouichefs_extent *extents, uint3
 	}
 	return ret;
 }
-
 
 static long ouichefs_ioctl(struct file *file, unsigned int cmd, unsigned long arg){
 	struct inode *inode = file->f_inode;
