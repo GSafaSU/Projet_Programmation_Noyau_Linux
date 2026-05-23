@@ -231,6 +231,72 @@ static int ouichefs_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
+static ssize_t ouichefs_read(struct file *file, char __user *buf,
+                              size_t count, loff_t *pos)
+{
+    /* 1. Récupérer inode, sb, ci */
+    struct inode *inode = file->f_inode;
+    struct super_block *sb = inode->i_sb;
+    struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
+
+    /* 2. EOF check : rien à lire si on est déjà à la fin */
+    if (*pos >= inode->i_size)
+        return 0;
+
+    /* 3. Ajuster count pour ne pas lire au-delà de i_size */
+    if (*pos + count > inode->i_size)
+        count = inode->i_size - *pos;
+        /* sans ça on lirait des octets hors fichier (garbage) */
+
+    /* 4. Lire le bloc index */
+    struct buffer_head *bh_index = sb_bread(sb, ci->index_block);
+    if (!bh_index)
+        return -EIO;
+    struct ouichefs_file_index_block *index =
+        (struct ouichefs_file_index_block *)bh_index->b_data;
+
+    /* 5. Calculer le bloc logique et l'offset dans ce bloc */
+    uint32_t logical_block = *pos / OUICHEFS_BLOCK_SIZE;
+    uint32_t offset_in_block = *pos % OUICHEFS_BLOCK_SIZE;
+    /* offset_in_block : où dans le bloc on commence à lire */
+
+    /* 6. Récupérer le numéro de bloc physique */
+    uint32_t phys_block = le32_to_cpu(index->blocks[logical_block].start);
+    if (!phys_block) {
+        /* bloc non alloué = trou dans le fichier */
+        brelse(bh_index);
+        return -EIO;
+    }
+
+    /* 7. Lire le bloc de données */
+    struct buffer_head *bh_data = sb_bread(sb, phys_block);
+    if (!bh_data) {
+        brelse(bh_index);
+        return -EIO;
+    }
+
+    /* 8. Limiter count à ce qui reste dans ce bloc */
+    uint32_t available_in_block = OUICHEFS_BLOCK_SIZE - offset_in_block;
+    if (count > available_in_block)
+        count = available_in_block;
+        /* on ne lit qu'un seul bloc à la fois */
+
+    /* 9. Copier vers userspace depuis b_data + offset */
+    size_t to_copy = min(count, (size_t)(OUICHEFS_BLOCK_SIZE - offset_in_block)); //Pour ne pas lire au delà de la fin de ce bloc actuel
+
+	unsigned long not_copied = copy_to_user(buf,bh_data->b_data + offset_in_block, to_copy);
+	ssize_t total_read = to_copy - not_copied;
+    /* total_read = ce qui a été réellement copié */
+
+    /* 10. Avancer le curseur */
+    *pos += total_read;
+
+    /* 11. Libérer les buffer_heads */
+    brelse(bh_data);
+    brelse(bh_index);
+
+    return total_read;
+}
 
 
 static ssize_t ouichefs_write(struct file *file, const char __user *buf,
@@ -359,25 +425,50 @@ out_unlock:
 }
 
 
-static uint32_t ouichefs_extent_get_block(
-		struct ouichefs_extent *extents, uint32_t logical_block){
-	
-	uint32_t i=0;
-	int ret=0;
-	while(extents[i].count != 0 && i<OUICHEFS_MAX_EXTENTS){
-		uint32_t start = le32_to_cpu(extents[i].start);
-		uint32_t count = le32_to_cpu(extents[i].count);
-		if(logical_block >= count) {
-			logical_block -= count;
-			i++;
-		}
-		else{
-			ret = start + logical_block;
-			break;
-		}
+static long ouichefs_ioctl(struct file *file, unsigned int cmd, unsigned long arg){
+	struct inode *inode = file->f_inode;
+	struct super_block *sb = inode -> i_sb;
+	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
+	struct ouichefs_file_index_block *index;
+	struct buffer_head *bh_index;
+
+	int i, nb_extents =0;
+
+	switch (cmd){
+		case OUICHEFS_IOC_GET_EXTENTS:
+			//Lectuure de l'index block
+			bh_index = sb_bread(sb, ci->index_block);
+			if(!bh_index){
+				return -EIO;
+			}
+			index = (struct ouichefs_file_index_block *)bh_index->b_data;
+
+			//Nombre de extent.count pas égale à 0, on break dès qu'un seul vaut 0, la suite sera forcément 0
+			for(i = 0; i < OUICHEFS_MAX_EXTENTS; i++){
+				if(index->blocks[i].count == 0){
+					break;
+				}
+				nb_extents++;
+			}
+			
+			//Afichage du header
+			pr_info("extents for inode %lu: %d extent(s)\n", inode->i_ino, nb_extents);
+
+			//Affichage des extents
+			for (i = 0; i < nb_extents; i++) {
+				uint32_t start = index->blocks[i].start;
+            	uint32_t count = index->blocks[i].count;
+            	pr_info("[%d] start=%u count=%u (blocks %u-%u)\n", i, start, count, start, start + count - 1);
+        	}
+
+			brelse(bh_index);
+			return 0;
+		default:
+        	return -ENOTTY;  //Commande inconnu
 	}
-	return ret;
+
 }
+
 
 const struct file_operations ouichefs_file_ops = {
 	.owner = THIS_MODULE,
@@ -386,5 +477,6 @@ const struct file_operations ouichefs_file_ops = {
 	.read = ouichefs_read,
 	.write = ouichefs_write,
 	.fsync = generic_file_fsync,
+	.unlocked_ioctl = ouichefs_ioctl,
 };
 

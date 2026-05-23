@@ -8,8 +8,12 @@
 #define _OUICHEFS_H
 
 #include <linux/fs.h>
+#include <linux/ioctl.h>
 
 #define OUICHEFS_MAGIC 0x48434957
+
+#define OUICHEFS_IOC_MAGIC 'W' //pour IOCTL
+#define OUICHEFS_IOC_GET_EXTENTS _IO(OUICHEFS_IOC_MAGIC, 0) //pour IOCTL
 
 #define OUICHEFS_SB_BLOCK_NR 0
 
@@ -62,7 +66,7 @@ struct ouichefs_inode {
 };
 
 struct ouichefs_inode_info {
-	uint32_t index_block;
+	uint32_t index_block; //physique
 	struct inode vfs_inode;
 };
 
