@@ -278,10 +278,10 @@ static ssize_t ouichefs_read(struct file *file, char __user *buf,
         /* on ne lit qu'un seul bloc à la fois */
 
     /* 9. Copier vers userspace depuis b_data + offset */
-    unsigned long not_copied = copy_to_user(buf,
-                                            bh_data->b_data + offset_in_block,
-                                            count);
-    ssize_t total_read = count - not_copied;
+    size_t to_copy = min(count, (size_t)(OUICHEFS_BLOCK_SIZE - offset_in_block)); //Pour ne pas lire au delà de la fin de ce bloc actuel
+
+	unsigned long not_copied = copy_to_user(buf,bh_data->b_data + offset_in_block, to_copy);
+	ssize_t total_read = to_copy - not_copied;
     /* total_read = ce qui a été réellement copié */
 
     /* 10. Avancer le curseur */
