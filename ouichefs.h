@@ -91,7 +91,7 @@ struct ouichefs_sb_info {
 };
 
 struct ouichefs_file_index_block {
-	struct ouichefs_extent blocks[OUICHEFS_MAX_EXTENTS];
+	struct ouichefs_extent extents[OUICHEFS_MAX_EXTENTS];
 };
 
 struct ouichefs_dir_block {

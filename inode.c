@@ -357,8 +357,8 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 		goto scrub;
 	for (i = 0; i < OUICHEFS_MAX_EXTENTS; i++) {
 		//Récuperation de start et count + conversation
-		uint32_t start = le32_to_cpu(file_block->blocks[i].start);
-		uint32_t count = le32_to_cpu(file_block->blocks[i].count);
+		uint32_t start = le32_to_cpu(file_block->extents[i].start);
+		uint32_t count = le32_to_cpu(file_block->extents[i].count);
 		
 		//Si count =0 alors tout ce qui suit vaut 0 aussi 
 		if(count == 0){
