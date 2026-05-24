@@ -355,21 +355,31 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 	file_block = (struct ouichefs_file_index_block *)bh->b_data;
 	if (S_ISDIR(inode->i_mode))
 		goto scrub;
-	for (i = 0; i < inode->i_blocks - 1; i++) {
-		char *block;
+	for (i = 0; i < OUICHEFS_MAX_EXTENTS; i++) {
+		//Récuperation de start et count + conversation
+		uint32_t start = le32_to_cpu(file_block->blocks[i].start);
+		uint32_t count = le32_to_cpu(file_block->blocks[i].count);
+		
+		//Si count =0 alors tout ce qui suit vaut 0 aussi 
+		if(count == 0){
+			break;
+		}
 
-		if (!file_block->blocks[i].start)
-			continue;
+		//Parcours de chaque bloc de l'extent courant
+		for(uint32_t j = 0; j < count; j++){
+			uint32_t phys_block = start + j;
+			char *block;
 
-    bh2 = sb_bread(sb, le32_to_cpu(file_block->blocks[i].start));
-		if (!bh2)
-			goto put_block;
-		block = (char *)bh2->b_data;
-		memset(block, 0, OUICHEFS_BLOCK_SIZE);
-		mark_buffer_dirty(bh2);
-		brelse(bh2);
+			bh2 = sb_bread(sb, phys_block);
+			if (!bh2)
+				goto put_block;
+			block = (char *)bh2->b_data;
+			memset(block, 0, OUICHEFS_BLOCK_SIZE);
+			mark_buffer_dirty(bh2);
+			brelse(bh2);
 put_block:
-		put_block(sbi, le32_to_cpu(file_block->blocks[i].start));
+			put_block(sbi, phys_block);
+		}
 	}
 
 scrub:

@@ -216,8 +216,21 @@ static int ouichefs_open(struct inode *inode, struct file *file)
 			return -EIO;
 		index = (struct ouichefs_file_index_block *)bh_index->b_data;
 
-		for (iblock = 0; index->blocks[iblock].count != 0; iblock++) {
-			put_block(sbi, le32_to_cpu(index->blocks[iblock].start));
+		//Boucle de parcours des extents
+		for (iblock = 0; iblock < OUICHEFS_MAX_EXTENTS; iblock++) {
+			//Récuperation de start et count + conversation
+			uint32_t start = le32_to_cpu(index->blocks[iblock].start);
+			uint32_t count = le32_to_cpu(index->blocks[iblock].count);
+
+			//Si count =0 alors tout ce qui suit vaut 0 aussi 
+			if(count == 0){
+				break;
+			}
+
+			//Parcours de chaque bloc de l'extent courant
+			for(uint32_t j = 0; j < count; j++){
+				put_block(sbi, start + j);   //start = num ddu premier bloc physique du extent, j = indice du bloc dans le extent
+			}
 			index->blocks[iblock].start = 0;
 			index->blocks[iblock].count = 0;
 		}
@@ -229,6 +242,25 @@ static int ouichefs_open(struct inode *inode, struct file *file)
 	}
 
 	return 0;
+}
+
+static uint32_t ouichefs_extent_get_block(struct ouichefs_extent *extents, uint32_t logical_block){
+	
+	uint32_t i=0;
+	int ret=0;
+	while(extents[i].count != 0 && i<OUICHEFS_MAX_EXTENTS){
+		uint32_t start = le32_to_cpu(extents[i].start);
+		uint32_t count = le32_to_cpu(extents[i].count);
+		if(logical_block >= count) {
+			logical_block -= count;
+			i++;
+		}
+		else{
+			ret = start + logical_block;
+			break;
+		}
+	}
+	return ret;
 }
 
 
@@ -329,10 +361,6 @@ static ssize_t ouichefs_write(struct file *file, const char __user *buf,
     if(file->f_flags & O_APPEND)
         new_pos = file->f_inode->i_size; 
     
-    /* Check if the write can be completed (enough space?) */
-    if (new_pos + len > OUICHEFS_MAX_FILESIZE) {
-        len = inode->i_size - new_pos;
-    }
 
     nr_allocs = max((loff_t)(new_pos + len), inode->i_size) / OUICHEFS_BLOCK_SIZE;
 
@@ -458,24 +486,7 @@ out_unlock:
 }
 
 
-static uint32_t ouichefs_extent_get_block(struct ouichefs_extent *extents, uint32_t logical_block){
-	
-	uint32_t i=0;
-	int ret=0;
-	while(extents[i].count != 0 && i<OUICHEFS_MAX_EXTENTS){
-		uint32_t start = le32_to_cpu(extents[i].start);
-		uint32_t count = le32_to_cpu(extents[i].count);
-		if(logical_block >= count) {
-			logical_block -= count;
-			i++;
-		}
-		else{
-			ret = start + logical_block;
-			break;
-		}
-	}
-	return ret;
-}
+
 
 static long ouichefs_ioctl(struct file *file, unsigned int cmd, unsigned long arg){
 	struct inode *inode = file->f_inode;
