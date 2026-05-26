@@ -16,7 +16,7 @@
 #include "ouichefs.h"
 #include "bitmap.h"
 
-static uint32_t reservation_size = 8;
+uint32_t reservation_size = 8;
 module_param(reservation_size, uint, 0644);
 MODULE_PARM_DESC(reservation_size, "Taille de la fenetre de reservation en blocs");
 
@@ -485,6 +485,11 @@ static void ouichefs_gc(struct super_block *sb)
 	struct inode *inode;
 
 	spin_lock(&sb->s_inode_list_lock);
+
+	//Compter le nombre d'appel à gc
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+	sbi->gc_runs++;
+
     //Parcour des inodes chargé en mémoire
 	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
 		struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);

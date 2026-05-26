@@ -12,6 +12,8 @@
 #include <linux/buffer_head.h>
 #include <linux/slab.h>
 #include <linux/statfs.h>
+#include <linux/kobject.h>
+
 
 #include "ouichefs.h"
 #include "bitmap.h"
@@ -180,6 +182,8 @@ static void ouichefs_put_super(struct super_block *sb)
 {
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 
+	ouichefs_sysfs_exit(sb);
+
 	if (sbi) {
 		kfree(sbi->ifree_bitmap);
 		kfree(sbi->bfree_bitmap);
@@ -343,6 +347,9 @@ int ouichefs_fill_super(struct super_block *sb, void *data, int silent)
 		goto free_bfree;
 	}
 
+	ret = ouichefs_sysfs_init(sb, sb->s_id);//Initialiser sysfs
+	if (ret)
+		pr_warn("sysfs init failed: %d\n", ret);
 	return 0;
 
 free_bfree:

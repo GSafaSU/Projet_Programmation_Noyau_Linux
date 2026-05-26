@@ -90,6 +90,9 @@ struct ouichefs_sb_info {
 
 	unsigned long *ifree_bitmap; /* In-memory free inodes bitmap */
 	unsigned long *bfree_bitmap; /* In-memory free blocks bitmap */
+
+	uint32_t gc_runs; //Nombre d'appel à GC depuis le montage
+	struct kobject *s_kobj;
 };
 
 struct ouichefs_file_index_block {
@@ -120,5 +123,12 @@ extern const struct address_space_operations ouichefs_aops;
 #define OUICHEFS_SB(sb) (sb->s_fs_info)
 #define OUICHEFS_INODE(inode) \
 	(container_of(inode, struct ouichefs_inode_info, vfs_inode))
+
+/* sysfs functions */
+int ouichefs_sysfs_init(struct super_block *sb, const char *devname);
+void ouichefs_sysfs_exit(struct super_block *sb);
+
+/* extern reservation_size pour sysfs.c */
+extern uint32_t reservation_size;
 
 #endif /* _OUICHEFS_H */
