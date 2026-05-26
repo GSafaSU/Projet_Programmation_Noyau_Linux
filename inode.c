@@ -44,6 +44,8 @@ struct inode *ouichefs_iget(struct super_block *sb, unsigned long ino)
 		return inode;
 
 	ci = OUICHEFS_INODE(inode);
+	ci->i_reserved_start = 0;
+	ci->i_reserved_count = 0;
 	/* Read inode from disk and initialize */
 	bh = sb_bread(sb, inode_block);
 	if (!bh) {
@@ -355,6 +357,17 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 	file_block = (struct ouichefs_file_index_block *)bh->b_data;
 	if (S_ISDIR(inode->i_mode))
 		goto scrub;
+
+	struct ouichefs_inode_info *ci_file = OUICHEFS_INODE(inode);
+    uint32_t k;
+	//Liberation de la reservation
+    if (ci_file->i_reserved_count > 0) {
+        for (k = 0; k < ci_file->i_reserved_count; k++)
+            put_block(sbi, ci_file->i_reserved_start + k);
+        ci_file->i_reserved_start = 0;
+        ci_file->i_reserved_count = 0;
+    }
+
 	for (i = 0; i < OUICHEFS_MAX_EXTENTS; i++) {
 		//Récuperation de start et count + conversation
 		uint32_t start = le32_to_cpu(file_block->extents[i].start);

@@ -67,6 +67,8 @@ struct ouichefs_inode {
 
 struct ouichefs_inode_info {
 	uint32_t index_block; //physique
+	uint32_t i_reserved_start; /* premier bloc pré-réservé */
+	uint32_t i_reserved_count; /* nombre de blocs pré-réservés restants */
 	struct inode vfs_inode;
 };
 

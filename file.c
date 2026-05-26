@@ -16,6 +16,10 @@
 #include "ouichefs.h"
 #include "bitmap.h"
 
+static uint32_t reservation_size = 8;
+module_param(reservation_size, uint, 0644);
+MODULE_PARM_DESC(reservation_size, "Taille de la fenetre de reservation en blocs");
+
 /*
  * Map the buffer_head passed in argument with the iblock-th block of the file
  * represented by inode. If the requested block is not allocated and create is
@@ -210,6 +214,15 @@ static int ouichefs_open(struct inode *inode, struct file *file)
 		struct buffer_head *bh_index;
 		sector_t iblock;
 
+        //Libération des reservation
+        if (ci->i_reserved_count > 0) {
+			uint32_t k;
+			for (k = 0; k < ci->i_reserved_count; k++)
+				put_block(sbi, ci->i_reserved_start + k);
+			ci->i_reserved_start = 0;
+			ci->i_reserved_count = 0;
+		}
+
 		/* Read index block from disk */
 		bh_index = sb_bread(sb, ci->index_block);
 		if (!bh_index)
@@ -244,6 +257,23 @@ static int ouichefs_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
+static int ouichefs_release(struct inode *inode, struct file *file)
+{
+	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
+	struct super_block *sb = inode->i_sb;
+	uint32_t k;
+
+	// Libérer les blocs réservés non utilisés à la fermeture
+	// ces blocs sont alloués dans le bitmap 
+	if (ci->i_reserved_count > 0) {
+		for (k = 0; k < ci->i_reserved_count; k++)
+			put_block(OUICHEFS_SB(sb),ci->i_reserved_start + k);
+		ci->i_reserved_start = 0;
+		ci->i_reserved_count = 0;
+	}
+
+	return 0;
+}
 
 static uint32_t ouichefs_alloc_contiguous(struct super_block *sb,
                                            uint32_t requested,
@@ -294,49 +324,49 @@ static int ouichefs_last_extent(struct ouichefs_file_index_block *index)
     return i;
 }
 
-static int ouichefs_alloc_and_register(struct super_block *sb,
-                                        struct ouichefs_file_index_block *index,
-                                        uint32_t remaining_blocks,
-                                        uint32_t *phys_out,
-                                        uint32_t *allocated_out)
-{
-    struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
-    uint32_t bno;
+// static int ouichefs_alloc_and_register(struct super_block *sb,
+//                                         struct ouichefs_file_index_block *index,
+//                                         uint32_t remaining_blocks,
+//                                         uint32_t *phys_out,
+//                                         uint32_t *allocated_out)
+// {
+//     struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+//     uint32_t bno;
 
-    uint32_t allocated = ouichefs_alloc_contiguous(sb, remaining_blocks, &bno);
-    if (!allocated)
-        return -ENOSPC;
+//     uint32_t allocated = ouichefs_alloc_contiguous(sb, remaining_blocks, &bno);
+//     if (!allocated)
+//         return -ENOSPC;
 
-    int i = ouichefs_last_extent(index);
+//     int i = ouichefs_last_extent(index);
 
-    if (i > 0) {
-        struct ouichefs_extent *last = &index->extents[i - 1];
-        uint32_t s = le32_to_cpu(last->start);
-        uint32_t c = le32_to_cpu(last->count);
+//     if (i > 0) {
+//         struct ouichefs_extent *last = &index->extents[i - 1];
+//         uint32_t s = le32_to_cpu(last->start);
+//         uint32_t c = le32_to_cpu(last->count);
 
-        if (s + c == bno) {
-            /* Contigu → étendre le dernier extent */
-            last->count = cpu_to_le32(c + allocated);
-        } else {
-            /* Non contigu → nouvel extent */
-            if (i >= OUICHEFS_MAX_EXTENTS) {
-                for (uint32_t k = 0; k < allocated; k++)
-                    put_block(sbi, bno + k);
-                return -ENOSPC;
-            }
-            index->extents[i].start = cpu_to_le32(bno);
-            index->extents[i].count = cpu_to_le32(allocated);
-        }
-    } else {
-        /* Premier extent du fichier */
-        index->extents[0].start = cpu_to_le32(bno);
-        index->extents[0].count = cpu_to_le32(allocated);
-    }
+//         if (s + c == bno) {
+//             /* Contigu → étendre le dernier extent */
+//             last->count = cpu_to_le32(c + allocated);
+//         } else {
+//             /* Non contigu → nouvel extent */
+//             if (i >= OUICHEFS_MAX_EXTENTS) {
+//                 for (uint32_t k = 0; k < allocated; k++)
+//                     put_block(sbi, bno + k);
+//                 return -ENOSPC;
+//             }
+//             index->extents[i].start = cpu_to_le32(bno);
+//             index->extents[i].count = cpu_to_le32(allocated);
+//         }
+//     } else {
+//         /* Premier extent du fichier */
+//         index->extents[0].start = cpu_to_le32(bno);
+//         index->extents[0].count = cpu_to_le32(allocated);
+//     }
 
-    *phys_out      = bno;
-    *allocated_out = allocated;
-    return 0;
-}
+//     *phys_out      = bno;
+//     *allocated_out = allocated;
+//     return 0;
+// }
 
 
 static int ouichefs_write_chunk(struct super_block *sb,
@@ -450,6 +480,28 @@ end:
     return ret;
 }
 
+static void ouichefs_gc(struct super_block *sb)
+{
+	struct inode *inode;
+
+	spin_lock(&sb->s_inode_list_lock);
+    //Parcour des inodes chargé en mémoire
+	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+		struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
+		uint32_t k;
+
+        //Si il y a des blocs reservé pour cette inode
+		if (ci->i_reserved_count > 0) {
+			//libération  de l'ensemble de ces blocs reservé
+			for (k = 0; k < ci->i_reserved_count; k++)
+				put_block(OUICHEFS_SB(sb),ci->i_reserved_start + k);
+			ci->i_reserved_start = 0;
+			ci->i_reserved_count = 0;
+		}
+	}
+	spin_unlock(&sb->s_inode_list_lock);
+}
+
 static ssize_t ouichefs_write(struct file *file, const char __user *buf,
                                size_t count, loff_t *pos)
 {
@@ -495,26 +547,75 @@ static ssize_t ouichefs_write(struct file *file, const char __user *buf,
             ouichefs_extent_get_block(index->extents, logical_block);
 
         if (!phys_block) {
-            uint32_t remaining =
-                roundup(new_pos + len, OUICHEFS_BLOCK_SIZE)
-                / OUICHEFS_BLOCK_SIZE - logical_block;
+            uint32_t new_bno;
 
-            uint32_t allocated;
-            ret = ouichefs_alloc_and_register(sb, index, remaining,
-                                               &phys_block, &allocated);
-            if (ret) goto brelse_index;
+            //Reserve disponible
+            if (ci->i_reserved_count > 0) {     
 
-            mark_buffer_dirty(bh_index);
+                new_bno = ci->i_reserved_start; //Le prochain bloc à écrire
+                ci->i_reserved_start++;
+                ci->i_reserved_count--;
+            } else {
+                //Plus de reserve
+                uint32_t start;
+                uint32_t got;
+                uint32_t to_request = max(reservation_size,
+                    (uint32_t)(roundup(new_pos + len,
+                        OUICHEFS_BLOCK_SIZE) / OUICHEFS_BLOCK_SIZE
+                        - logical_block));
 
-            /* Allocation partielle → écriture partielle, le caller retentera */
-            if (allocated < remaining) {
-                size_t max_writable = (size_t)allocated * OUICHEFS_BLOCK_SIZE
-                                      - offset_in_block;
-                if (len > max_writable)
-                    len = max_writable;
+                got = ouichefs_alloc_contiguous(sb, to_request, &start);//Nouvelle fenetre de bloc
+                //s'il n'y a plus de bloc libre
+                if (!got) {
+                    ouichefs_gc(sb);
+                    got = ouichefs_alloc_contiguous(sb,to_request, &start);
+                    //Si il n'y a toujours pas de bloc libre
+                    if (!got) {
+                        ret = -ENOSPC;
+                        goto brelse_index;
+                    }
+                }
+
+                //On stock la fenètre obtenu et on consomme le premier
+                ci->i_reserved_start = start + 1;
+                ci->i_reserved_count = got - 1; 
+                new_bno = start;
             }
 
-            phys_block = ouichefs_extent_get_block(index->extents, logical_block);
+
+            int ei = ouichefs_last_extent(index);//Numero du premier slot vide dans le tableau extent
+
+           
+            if (ei > 0) {
+                struct ouichefs_extent *last = &index->extents[ei - 1]; //pointeur vers le dernier extent valide
+                uint32_t s = le32_to_cpu(last->start);
+                uint32_t c = le32_to_cpu(last->count);
+
+                //Contigus
+                if (s + c == new_bno) {
+                    
+                    last->count = cpu_to_le32(c + 1);
+                } 
+                //Non contigu
+                else {
+                    //Si on a atteint le max extent
+                    if (ei >= OUICHEFS_MAX_EXTENTS) {
+                        ret = -ENOSPC;
+                        goto brelse_index;
+                    }
+                    //Creer un nouvelle extent
+                    index->extents[ei].start = cpu_to_le32(new_bno);
+                    index->extents[ei].count = cpu_to_le32(1);
+                }
+            } 
+             //Si le fichier n'a encore aucun extent
+            else {
+                index->extents[0].start = cpu_to_le32(new_bno);
+                index->extents[0].count = cpu_to_le32(1);
+            }
+
+            mark_buffer_dirty(bh_index);
+            phys_block = new_bno;
         }
 
         ret = ouichefs_write_chunk(sb, phys_block,
@@ -595,9 +696,11 @@ static long ouichefs_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 }
 
 
+
 const struct file_operations ouichefs_file_ops = {
 	.owner = THIS_MODULE,
 	.open = ouichefs_open,
+    .release = ouichefs_release,
 	.llseek = generic_file_llseek,
 	.read = ouichefs_read,
 	.write = ouichefs_write,
