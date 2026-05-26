@@ -208,16 +208,16 @@ static ssize_t gc_runs_show(struct kobject *kobj,
 
 
 
-static struct kobj_attribute free_blocks_attr = ATTR(free_blocks, 0444, free_blocks_show, NULL);
-static struct kobj_attribute committed_blocks_attr = ATTR(committed_blocks, 0444, committed_blocks_show, NULL);
-static struct kobj_attribute reserved_blocks_attr = ATTR(reserved_blocks, 0444, reserved_blocks_show, NULL);
-static struct kobj_attribute files_attr = ATTR(files, 0444, files_show, NULL);
-static struct kobj_attribute total_extents_attr = ATTR(total_extents, 0444, total_extents_show, NULL);
-static struct kobj_attribute avg_extent_size_attr = ATTR(avg_extent_size, 0444, avg_extent_size_show, NULL);
-static struct kobj_attribute max_file_size_attr = ATTR(max_file_size, 0444, max_file_size_show, NULL);
-static struct kobj_attribute fragmentation_attr = ATTR(fragmentation, 0444, fragmentation_show, NULL);
-static struct kobj_attribute reservation_size_attr = ATTR(reservation_size, 0644, reservation_size_show, reservation_size_store);
-static struct kobj_attribute gc_runs_attr = ATTR(gc_runs, 0444, gc_runs_show, NULL);
+static struct kobj_attribute free_blocks_attr = __ATTR(free_blocks, 0444, free_blocks_show, NULL);
+static struct kobj_attribute committed_blocks_attr = __ATTR(committed_blocks, 0444, committed_blocks_show, NULL);
+static struct kobj_attribute reserved_blocks_attr = __ATTR(reserved_blocks, 0444, reserved_blocks_show, NULL);
+static struct kobj_attribute files_attr = __ATTR(files, 0444, files_show, NULL);
+static struct kobj_attribute total_extents_attr = __ATTR(total_extents, 0444, total_extents_show, NULL);
+static struct kobj_attribute avg_extent_size_attr = __ATTR(avg_extent_size, 0444, avg_extent_size_show, NULL);
+static struct kobj_attribute max_file_size_attr = __ATTR(max_file_size, 0444, max_file_size_show, NULL);
+static struct kobj_attribute fragmentation_attr = __ATTR(fragmentation, 0444, fragmentation_show, NULL);
+static struct kobj_attribute reservation_size_attr = __ATTR(reservation_size, 0644, reservation_size_show, reservation_size_store);
+static struct kobj_attribute gc_runs_attr = __ATTR(gc_runs, 0444, gc_runs_show, NULL);
 
 static struct attribute *ouichefs_attrs[] = {
 	&free_blocks_attr.attr,
