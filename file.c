@@ -495,14 +495,12 @@ static void ouichefs_gc(struct super_block *sb)
 		struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
 		uint32_t k;
 
-        //Si il y a des blocs reservé pour cette inode
-		if (ci->i_reserved_count > 0) {
-			//libération  de l'ensemble de ces blocs reservé
-			for (k = 0; k < ci->i_reserved_count; k++)
-				put_block(OUICHEFS_SB(sb),ci->i_reserved_start + k);
-			ci->i_reserved_start = 0;
-			ci->i_reserved_count = 0;
-		}
+		//libération  de l'ensemble de ces blocs reservé
+		for (k = 0; k < ci->i_reserved_count; k++)
+			put_block(OUICHEFS_SB(sb),ci->i_reserved_start + k);
+		ci->i_reserved_start = 0;
+		ci->i_reserved_count = 0;
+		
 	}
 	spin_unlock(&sb->s_inode_list_lock);
 }
