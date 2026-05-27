@@ -595,14 +595,17 @@ static ssize_t ouichefs_read(struct file *file, char __user *buf,
 			break;
 
 		} else if (phys == OUICHEFS_HOLE_BLOCK) {
-			/* Trou — allouer un buffer kernel, le mettre à zéro,
-			* puis le copier vers userspace */
-			char zero_buf[OUICHEFS_BLOCK_SIZE];
-			memset(zero_buf, 0, available_in_block);
+			char *zero_buf = kzalloc(available_in_block, GFP_KERNEL);
+			if (!zero_buf) {
+				ret = -ENOMEM;
+				goto brelse_index;
+			}
 
 			unsigned long not_copied = copy_to_user(buf + total_read,
 													zero_buf,
 													available_in_block);
+			kfree(zero_buf);
+
 			size_t copied = available_in_block - not_copied;
 			total_read += copied;
 			new_pos    += copied;
