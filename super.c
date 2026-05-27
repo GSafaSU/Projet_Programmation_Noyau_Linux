@@ -270,7 +270,7 @@ int ouichefs_fill_super(struct super_block *sb, void *data, int silent)
 		return -ENOMEM;
 	}
 	spin_lock_init(&sbi->bfree_lock);
-	
+
 	sbi->nr_blocks = le32_to_cpu(csb->nr_blocks);
 	sbi->nr_inodes = le32_to_cpu(csb->nr_inodes);
 	sbi->nr_istore_blocks = le32_to_cpu(csb->nr_istore_blocks);
@@ -326,7 +326,7 @@ int ouichefs_fill_super(struct super_block *sb, void *data, int silent)
 		brelse(bh);
 	}
 
-	/* 
+	/*
 	 * Create root inode.
 	 *
 	 * 1 is used instead of 0 to stay compatible with userspace applications,

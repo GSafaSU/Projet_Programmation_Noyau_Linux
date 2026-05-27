@@ -1,10 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0
 #define pr_fmt(fmt) "%s:%s: " fmt, KBUILD_MODNAME, __func__
 
 #include <linux/kobject.h>
 #include <linux/sysfs.h>
 #include <linux/fs.h>
 #include <linux/slab.h>
-#include <linux/buffer_head.h> 
+#include <linux/buffer_head.h>
 
 #include "ouichefs.h"
 #include "bitmap.h"
@@ -242,7 +243,7 @@ static void ouichefs_kobj_release(struct kobject *kobj)
 	kfree(to_ouichefs_kobj(kobj));
 }
 
-static struct kobj_type ouichefs_ktype = {
+static const struct kobj_type ouichefs_ktype = {
 	.release        = ouichefs_kobj_release,
 	.sysfs_ops      = &kobj_sysfs_ops,
 	.default_groups = ouichefs_groups,
@@ -268,10 +269,8 @@ int ouichefs_sysfs_init(struct super_block *sb, const char *devname)
 	}
 
 	okobj = kzalloc(sizeof(*okobj), GFP_KERNEL);
-	if (!okobj) {
-		pr_err("kzalloc failed\n");
+	if (!okobj)
 		return -ENOMEM;
-	}
 
 	okobj->sb = sb;
 

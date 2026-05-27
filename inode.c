@@ -359,31 +359,31 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 		goto scrub;
 
 	struct ouichefs_inode_info *ci_file = OUICHEFS_INODE(inode);
-    uint32_t k;
+	uint32_t k;
 	//Liberation de la reservation
-    if (ci_file->i_reserved_count > 0) {
-        for (k = 0; k < ci_file->i_reserved_count; k++)
-            put_block(sbi, ci_file->i_reserved_start + k);
-        ci_file->i_reserved_start = 0;
-        ci_file->i_reserved_count = 0;
-    }
+	if (ci_file->i_reserved_count > 0) {
+		for (k = 0; k < ci_file->i_reserved_count; k++)
+			put_block(sbi, ci_file->i_reserved_start + k);
+		ci_file->i_reserved_start = 0;
+		ci_file->i_reserved_count = 0;
+	}
 
 	for (i = 0; i < OUICHEFS_MAX_EXTENTS; i++) {
 		//Récuperation de start et count + conversation
 		uint32_t start = le32_to_cpu(file_block->extents[i].start);
 		uint32_t count = le32_to_cpu(file_block->extents[i].count);
-		
-		//Si count =0 alors tout ce qui suit vaut 0 aussi 
-		if(count == 0){
+
+		//Si count =0 alors tout ce qui suit vaut 0 aussi
+		if (count == 0)
 			break;
-		}
+
 		//si trou on ignore
-		if(start==0){
+		if (start == 0)
 			continue;
-		}
+
 
 		//Parcours de chaque bloc de l'extent courant
-		for(uint32_t j = 0; j < count; j++){
+		for (uint32_t j = 0; j < count; j++) {
 			uint32_t phys_block = start + j;
 			char *block;
 
