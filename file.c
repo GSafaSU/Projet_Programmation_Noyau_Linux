@@ -241,11 +241,12 @@ static int ouichefs_open(struct inode *inode, struct file *file)
 			}
 
 			//Parcours de chaque bloc de l'extent courant
-			for(uint32_t j = 0; j < count; j++){
-				put_block(sbi, start + j);   //start = num ddu premier bloc physique du extent, j = indice du bloc dans le extent
-			}
-			index->extents[iblock].start = 0;
-			index->extents[iblock].count = 0;
+			if (start != 0) {
+                for (uint32_t j = 0; j < count; j++)
+                    put_block(sbi, start + j);
+            }
+            index->extents[iblock].start = 0;
+            index->extents[iblock].count = 0;
 		}
 		inode->i_size = 0;
 		inode->i_blocks = 1;
@@ -523,14 +524,11 @@ static int ouichefs_write_into_hole(struct super_block *sb,
          * {0, N} → {0, offset}, {réel, 1}, {0, N-offset-1}
          * Nécessite 2 slots supplémentaires */
         int last = ouichefs_last_extent(index);
-        if (last + 2 > OUICHEFS_MAX_EXTENTS) {
+        if (last + 2 >= OUICHEFS_MAX_EXTENTS) {
             put_block(sbi, new_bno);
             return -ENOSPC;
         }
-
-        /* Décaler de 2 crans vers la droite à partir de ei
-         * pour faire place aux 2 nouveaux extents */
-        for (int j = last; j >= ei; j--)
+        for (int j = last - 1; j >= ei; j--)
             index->extents[j + 2] = index->extents[j];
 
         /* Partie gauche du trou */
@@ -720,8 +718,10 @@ static ssize_t ouichefs_write(struct file *file, const char __user *buf,
 			index->extents[ei-1].count = cpu_to_le32(c + gap_blocks);
 		} else {
 			/* Sinon créer un nouveau trou */
-			if (ei >= OUICHEFS_MAX_EXTENTS)
-				return -ENOSPC;
+			if (ei >= OUICHEFS_MAX_EXTENTS) {
+                ret = -ENOSPC;
+                goto brelse_index;
+            }
 			index->extents[ei].start = cpu_to_le32(0);
 			index->extents[ei].count = cpu_to_le32(gap_blocks);
 		}
@@ -793,10 +793,9 @@ static ssize_t ouichefs_write(struct file *file, const char __user *buf,
                 uint32_t c = le32_to_cpu(last->count);
 
                 //Contigus
-                if (s + c == new_bno) {
-                    
+                if (s != 0 && s + c == new_bno) {
                     last->count = cpu_to_le32(c + 1);
-                } 
+                }
                 //Non contigu
                 else {
                     //Si on a atteint le max extent
@@ -842,7 +841,8 @@ static ssize_t ouichefs_write(struct file *file, const char __user *buf,
     ret  = total_written;
 
 brelse_index:
-    sync_dirty_buffer(bh_index);
+    if (ret >= 0)
+        sync_dirty_buffer(bh_index);
     brelse(bh_index);
 out_unlock:
     inode_unlock(inode);
