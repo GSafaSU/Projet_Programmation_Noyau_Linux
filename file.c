@@ -287,6 +287,8 @@ static uint32_t ouichefs_alloc_contiguous(struct super_block *sb,
     uint32_t best_len   = 0;
     uint32_t cur        = 0;
 
+	spin_lock(&sbi->bfree_lock);
+
     while (cur < nr_blocks) {
         uint32_t run_start = find_next_bit(bitmap, nr_blocks, cur);
         if (run_start >= nr_blocks)
@@ -311,6 +313,8 @@ static uint32_t ouichefs_alloc_contiguous(struct super_block *sb,
 
     bitmap_clear(bitmap, best_start, best_len);
     sbi->nr_free_blocks -= best_len;
+
+	spin_unlock(&sbi->bfree_lock);
 
     *block = best_start;
     return best_len;
@@ -644,12 +648,12 @@ end:
 static void ouichefs_gc(struct super_block *sb)
 {
 	struct inode *inode;
-
-	spin_lock(&sb->s_inode_list_lock);
-
+	
 	//Compter le nombre d'appel à gc
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	sbi->gc_runs++;
+
+	spin_lock(&sb->s_inode_list_lock);
 
     //Parcour des inodes chargé en mémoire
 	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {

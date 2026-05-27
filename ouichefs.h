@@ -94,6 +94,8 @@ struct ouichefs_sb_info {
 
 	uint32_t gc_runs; //Nombre d'appel à GC depuis le montage
 	struct kobject *s_kobj;
+
+	spinlock_t bfree_lock; 
 };
 
 struct ouichefs_file_index_block {
