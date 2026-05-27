@@ -56,6 +56,7 @@ static void scan_inodes(struct super_block *sb,
 
 		index = (struct ouichefs_file_index_block *)bh->b_data;
 		(*files)++;
+		(*committed)++; //L'index bloc
 
 		for (i = 0; i < OUICHEFS_MAX_EXTENTS; i++) {
 			uint32_t c = le32_to_cpu(index->extents[i].count);
@@ -254,25 +255,35 @@ int ouichefs_sysfs_init(struct super_block *sb, const char *devname)
 	struct ouichefs_kobj *okobj;
 	int ret;
 
+	pr_info("sysfs_init called for %s\n", devname);
+
 	if (!ouichefs_root_kobj) {
 		ouichefs_root_kobj =
 			kobject_create_and_add("ouichefs", kernel_kobj);
-		if (!ouichefs_root_kobj)
+		if (!ouichefs_root_kobj) {
+			pr_err("failed to create root kobject\n");
 			return -ENOMEM;
+		}
+		pr_info("root kobject created\n");
 	}
 
 	okobj = kzalloc(sizeof(*okobj), GFP_KERNEL);
-	if (!okobj)
+	if (!okobj) {
+		pr_err("kzalloc failed\n");
 		return -ENOMEM;
+	}
 
 	okobj->sb = sb;
 
 	ret = kobject_init_and_add(&okobj->kobj, &ouichefs_ktype,
 				   ouichefs_root_kobj, "%s", devname);
 	if (ret) {
+		pr_err("kobject_init_and_add failed: %d\n", ret);
 		kobject_put(&okobj->kobj);
 		return ret;
 	}
+
+	pr_info("kobject added at /sys/ouichefs/%s\n", devname);
 
 	sbi->s_kobj = &okobj->kobj;
 	kobject_uevent(&okobj->kobj, KOBJ_ADD);
