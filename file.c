@@ -309,8 +309,10 @@ static uint32_t ouichefs_alloc_contiguous(struct super_block *sb,
         cur = run_end;
     }
 
-    if (best_len == 0)
+    if (best_len == 0){
+        spin_unlock(&sbi->bfree_lock);
         return 0;
+    }
 
     bitmap_clear(bitmap, best_start, best_len);
     sbi->nr_free_blocks -= best_len;
@@ -524,11 +526,11 @@ static int ouichefs_write_into_hole(struct super_block *sb,
          * {0, N} → {0, offset}, {réel, 1}, {0, N-offset-1}
          * Nécessite 2 slots supplémentaires */
         int last = ouichefs_last_extent(index);
-        if (last + 2 >= OUICHEFS_MAX_EXTENTS) {
+        if (last + 2 > OUICHEFS_MAX_EXTENTS) {
             put_block(sbi, new_bno);
             return -ENOSPC;
         }
-        for (int j = last - 1; j >= ei; j--)
+        for (int j = last; j >= ei; j--)
             index->extents[j + 2] = index->extents[j];
 
         /* Partie gauche du trou */
