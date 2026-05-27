@@ -402,12 +402,151 @@ static uint32_t ouichefs_extent_get_block(struct ouichefs_extent *extents, uint3
 			i++;
 		}
 		else{
-			ret = start + logical_block;
-			break;
+			if (start == 0)
+                ret = OUICHEFS_HOLE_BLOCK;  
+            else
+                ret = start + logical_block; 
+            break;
 		}
 	}
 	return ret;
 }
+
+/* Retourne l'index de l'extent contenant logical_block,
+ * et l'offset de logical_block dans cet extent */
+static int ouichefs_find_extent(struct ouichefs_file_index_block *index,
+                                 uint32_t logical_block,
+                                 uint32_t *offset_in_extent)
+{
+    int i = 0;
+    uint32_t remaining = logical_block;
+
+    while (i < OUICHEFS_MAX_EXTENTS &&
+           index->extents[i].count != 0) {
+        uint32_t count = le32_to_cpu(index->extents[i].count);
+
+        if (remaining < count) {
+            *offset_in_extent = remaining;
+            return i;
+        }
+        remaining -= count;
+        i++;
+    }
+    return -1;
+}
+
+/* Décale tous les extents à partir de pos d'un cran vers la droite
+ * pour libérer un slot à l'index pos */
+static int ouichefs_shift_extents_right(
+        struct ouichefs_file_index_block *index, int pos)
+{
+    int last = ouichefs_last_extent(index);
+
+    /* Vérifier qu'il reste de la place */
+    if (last >= OUICHEFS_MAX_EXTENTS)
+        return -ENOSPC;
+
+    /* Copier de droite à gauche pour éviter d'écraser
+     * les données source avant de les avoir copiées */
+    for (int j = last; j >= pos; j--)
+        index->extents[j + 1] = index->extents[j];
+
+    return 0;
+}
+
+/* Découpe un trou existant et alloue un vrai bloc pour la zone écrite */
+static int ouichefs_write_into_hole(struct super_block *sb,
+                                     struct ouichefs_file_index_block *index,
+                                     uint32_t logical_block,
+                                     uint32_t *phys_out)
+{
+    struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+    uint32_t offset_in_extent;
+    int ei, ret;
+    uint32_t new_bno;
+
+    /* 1. Trouver l'extent trou qui contient ce bloc logique */
+    ei = ouichefs_find_extent(index, logical_block, &offset_in_extent);
+    if (ei < 0)
+        return -EIO;
+
+    uint32_t hole_count = le32_to_cpu(index->extents[ei].count);
+
+    /* 2. Allouer un vrai bloc physique */
+    new_bno = get_free_block(sbi);
+    if (!new_bno)
+        return -ENOSPC;
+
+    /* 3. Découper selon la position dans le trou */
+
+    if (hole_count == 1) {
+        /* Cas simple : trou d'un seul bloc
+         * {0, 1} → {réel, 1} */
+        index->extents[ei].start = cpu_to_le32(new_bno);
+        index->extents[ei].count = cpu_to_le32(1);
+
+    } else if (offset_in_extent == 0) {
+        /* Écriture au DÉBUT du trou
+         * {0, N} → {réel, 1}, {0, N-1} */
+        ret = ouichefs_shift_extents_right(index, ei);
+        if (ret) {
+            put_block(sbi, new_bno);
+            return ret;
+        }
+        /* Nouveau bloc réel */
+        index->extents[ei].start   = cpu_to_le32(new_bno);
+        index->extents[ei].count   = cpu_to_le32(1);
+        /* Reste du trou */
+        index->extents[ei+1].start = cpu_to_le32(0);
+        index->extents[ei+1].count = cpu_to_le32(hole_count - 1);
+
+    } else if (offset_in_extent == hole_count - 1) {
+        /* Écriture à la FIN du trou
+         * {0, N} → {0, N-1}, {réel, 1} */
+        ret = ouichefs_shift_extents_right(index, ei + 1);
+        if (ret) {
+            put_block(sbi, new_bno);
+            return ret;
+        }
+        /* Partie gauche du trou */
+        index->extents[ei].count     = cpu_to_le32(hole_count - 1);
+        /* Nouveau bloc réel */
+        index->extents[ei+1].start   = cpu_to_le32(new_bno);
+        index->extents[ei+1].count   = cpu_to_le32(1);
+
+    } else {
+        /* Écriture au MILIEU du trou
+         * {0, N} → {0, offset}, {réel, 1}, {0, N-offset-1}
+         * Nécessite 2 slots supplémentaires */
+        int last = ouichefs_last_extent(index);
+        if (last + 2 > OUICHEFS_MAX_EXTENTS) {
+            put_block(sbi, new_bno);
+            return -ENOSPC;
+        }
+
+        /* Décaler de 2 crans vers la droite à partir de ei
+         * pour faire place aux 2 nouveaux extents */
+        for (int j = last; j >= ei; j--)
+            index->extents[j + 2] = index->extents[j];
+
+        /* Partie gauche du trou */
+        index->extents[ei].start   = cpu_to_le32(0);
+        index->extents[ei].count   = cpu_to_le32(offset_in_extent);
+        /* Bloc réel au milieu */
+        index->extents[ei+1].start = cpu_to_le32(new_bno);
+        index->extents[ei+1].count = cpu_to_le32(1);
+        /* Partie droite du trou */
+        index->extents[ei+2].start = cpu_to_le32(0);
+        index->extents[ei+2].count = cpu_to_le32(
+            hole_count - offset_in_extent - 1);
+    }
+
+    *phys_out = new_bno;
+    return 0;
+}
+
+
+
 
 static ssize_t ouichefs_read(struct file *file, char __user *buf,
                               size_t count, loff_t *pos)
@@ -449,25 +588,43 @@ static ssize_t ouichefs_read(struct file *file, char __user *buf,
             available_in_block = len;
 
         /* Traduction logique → physique via le helper 1.4.1 */
-        uint32_t phys_block = ouichefs_extent_get_block(index->extents, logical_block);
-        if (!phys_block)
-            break;  /* bloc logique au-delà de la fin de la liste d'extents */
+        uint32_t phys = ouichefs_extent_get_block(index->extents, logical_block);
 
-        bh_data = sb_bread(sb, phys_block);
-        if (!bh_data) {
-            ret = -EIO;
-            goto brelse_index;
-        }
+		if (phys == 0) {
+			/* Fin de fichier — arrêter */
+			break;
 
-        unsigned long not_copied = copy_to_user(buf + total_read,
-                                                bh_data->b_data + offset_in_block,
-                                                available_in_block);
-        brelse(bh_data);
+		} else if (phys == OUICHEFS_HOLE_BLOCK) {
+			/* Trou — allouer un buffer kernel, le mettre à zéro,
+			* puis le copier vers userspace */
+			char zero_buf[OUICHEFS_BLOCK_SIZE];
+			memset(zero_buf, 0, available_in_block);
 
-        size_t copied = available_in_block - not_copied;
-        total_read += copied;
-        new_pos    += copied;
-        len        -= copied;
+			unsigned long not_copied = copy_to_user(buf + total_read,
+													zero_buf,
+													available_in_block);
+			size_t copied = available_in_block - not_copied;
+			total_read += copied;
+			new_pos    += copied;
+			len        -= copied;
+
+		} else {
+			/* Bloc physique réel — lire normalement */
+			bh_data = sb_bread(sb, phys);
+			if (!bh_data) {
+				ret = -EIO;
+				goto brelse_index;
+			}
+			unsigned long not_copied = copy_to_user(buf + total_read,
+													bh_data->b_data + offset_in_block,
+													available_in_block);
+			brelse(bh_data);
+
+			size_t copied = available_in_block - not_copied;
+			total_read += copied;
+			new_pos    += copied;
+			len        -= copied;
+		}
     }
 
     *pos = new_pos;
@@ -540,6 +697,31 @@ static ssize_t ouichefs_write(struct file *file, const char __user *buf,
     if (!bh_index) { ret = -EIO; goto out_unlock; }
     index = (struct ouichefs_file_index_block *)bh_index->b_data;
 
+
+	if (new_pos > inode->i_size) {
+		/* Calculer le gap en blocs */
+		uint32_t gap_bytes  = new_pos - inode->i_size;
+		uint32_t gap_blocks = (gap_bytes + OUICHEFS_BLOCK_SIZE - 1)
+							/ OUICHEFS_BLOCK_SIZE;
+
+		int ei = ouichefs_last_extent(index);
+
+		/* Si le dernier extent est déjà un trou, l'étendre */
+		if (ei > 0 && index->extents[ei-1].start == 0) {
+			uint32_t c = le32_to_cpu(index->extents[ei-1].count);
+			index->extents[ei-1].count = cpu_to_le32(c + gap_blocks);
+		} else {
+			/* Sinon créer un nouveau trou */
+			if (ei >= OUICHEFS_MAX_EXTENTS)
+				return -ENOSPC;
+			index->extents[ei].start = cpu_to_le32(0);
+			index->extents[ei].count = cpu_to_le32(gap_blocks);
+		}
+		mark_buffer_dirty(bh_index);
+	}
+
+
+
     while (len > 0) {
         uint32_t logical_block   = new_pos / OUICHEFS_BLOCK_SIZE;
         uint32_t offset_in_block = new_pos % OUICHEFS_BLOCK_SIZE;
@@ -549,7 +731,15 @@ static ssize_t ouichefs_write(struct file *file, const char __user *buf,
         uint32_t phys_block =
             ouichefs_extent_get_block(index->extents, logical_block);
 
-        if (!phys_block) {
+		if (phys_block == OUICHEFS_HOLE_BLOCK) {
+		/* Écriture dans un trou existant → découper le trou */
+		ret = ouichefs_write_into_hole(sb, index, logical_block,
+										&phys_block);
+		if (ret)
+			goto brelse_index;
+		mark_buffer_dirty(bh_index);
+
+        } else if (phys_block == 0) {
             uint32_t new_bno;
 
             //Reserve disponible

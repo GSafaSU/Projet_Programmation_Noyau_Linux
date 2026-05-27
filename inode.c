@@ -377,6 +377,10 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 		if(count == 0){
 			break;
 		}
+		//si trou on ignore
+		if(start==0){
+			continue;
+		}
 
 		//Parcours de chaque bloc de l'extent courant
 		for(uint32_t j = 0; j < count; j++){
