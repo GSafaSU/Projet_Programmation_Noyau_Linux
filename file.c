@@ -740,12 +740,12 @@ static ssize_t ouichefs_write(struct file *file, const char __user *buf,
             ouichefs_extent_get_block(index->extents, logical_block);
 
 		if (phys_block == OUICHEFS_HOLE_BLOCK) {
-		/* Écriture dans un trou existant → découper le trou */
-		ret = ouichefs_write_into_hole(sb, index, logical_block,
-										&phys_block);
-		if (ret)
-			goto brelse_index;
-		mark_buffer_dirty(bh_index);
+            /* Écriture dans un trou existant → découper le trou */
+            ret = ouichefs_write_into_hole(sb, index, logical_block,
+                                            &phys_block);
+            if (ret)
+                goto brelse_index;
+            mark_buffer_dirty(bh_index);
 
         } else if (phys_block == 0) {
             uint32_t new_bno;
